@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
-st.set_page_config(page_title="Okosy - 自分らしい旅をデザイン", layout="wide")
-st.title("Okosy - 自分らしい旅をデザイン")
-st.caption("SNSや広告にハックされない、“本来の旅”を取り戻す")
+st.markdown("""
+    <style>
+    .block-container {
+        padding-top: 1rem;
+        max-width: 90% !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
 import sqlite3
 import openai
 # ★★★ OpenAI v1.x 対応: OpenAI クラスをインポート ★★★
@@ -12,14 +17,74 @@ import json
 import os
 import datetime
 from dotenv import load_dotenv
+import os
 from PIL import Image
 import io
 import pandas as pd
+import base64
+
+def get_base64_image(image_path):
+    with open(image_path, "rb") as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
+header_base64 = get_base64_image("assets/header_okosy.png")
+
+st.markdown(
+    f"""
+    <div style="text-align: center; margin-top: 30px; margin-bottom: 100px;">
+        <img src="data:image/png;base64,{header_base64}" width="700" style="border-radius: 8px;">
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+#CSS設定
+st.markdown("""
+    <style>
+    .title-center {
+        text-align: center;
+        font-size: 42px;
+        font-weight: 700;
+        color: #246798;
+        margin-top: 2rem;
+        margin-bottom: 2rem;
+    }
+/* ボタンを中央に置くラッパー */
+.button-wrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-top: 30px;
+    margin-bottom: 60px;
+}
+
+/* Streamlitのbuttonにスタイルを当てる */
+div.stButton > button {
+ background-color: transparent; /* 背景は透明＝白抜き */
+    color: #246798; /* テキストカラーは青 */
+    border: 1.5pt solid #246798; /* 枠線も青で1.5pt */
+    padding: 0.75em 2.5em;
+    font-size: 20px;
+    font-weight: bold;
+    border-radius: 10px;
+    transition: transform 0.2s ease, background-color 0.4s ease, color 0.4s ease;
+}
+
+div.stButton > button:hover {
+    background-color: #EAEAEA;     /* 背景は薄いグレー */
+    color: #666666;                /* テキストはグレーに */
+    border: none;                  /* 枠線を消す */
+    transform: scale(1.05);        /* 少し拡大 */
+}
+</style>
+""", unsafe_allow_html=True)
 
 # --- 1. 環境変数の読み込みと初期設定 ---
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY")
+from google.cloud import vision
+# --- 認証設定 ---
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
 if not OPENAI_API_KEY:
     st.error("OpenAI APIキーが見つかりません。.envファイルを確認してください。")
@@ -29,9 +94,8 @@ if not GOOGLE_PLACES_API_KEY:
     st.error("Google Places APIキーが見つかりません。.envファイルを確認してください。")
     st.stop()
 
-# ★★★ OpenAI v1.x 対応: クライアントを初期化 ★★★
-# 環境変数 OPENAI_API_KEY は自動的に読み込まれます
-client = OpenAI()#clientの初期化をこのパートで実施
+# ★★★クライアントを初期化 ★★★
+client = OpenAI()
 
 # --- 2. データベースの初期設定 (SQLite) ---
 DATABASE_NAME = "okosy_data_noauth.db"
@@ -101,7 +165,48 @@ def get_coordinates(address):#GoogleのジオコーディングAPIを叩いて�
     except Exception as e:
         print(f"Geocodingエラー: {e}")
         return None #エラーが出たら、Noneにして処理を進める、パート2
+    
+        
+# VisionAPIを用い、画像ラベル抽出用の関数を追加
+def get_vision_labels_from_uploaded_images(images):
+    from google.oauth2 import service_account
+    from google.auth.transport.requests import Request
 
+    creds = service_account.Credentials.from_service_account_file(
+        os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+        scopes=["https://www.googleapis.com/auth/cloud-platform"],
+    )
+
+    if not creds.valid:
+        creds.refresh(Request())
+
+    access_token = creds.token
+    endpoint = "https://vision.googleapis.com/v1/images:annotate"
+    all_labels = []
+
+    for img_file in images:
+        content = base64.b64encode(img_file.read()).decode("utf-8")
+        payload = {
+            "requests": [{
+                "image": {"content": content},
+                "features": [{"type": "LABEL_DETECTION", "maxResults": 5}]
+            }]
+        }
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(endpoint, headers=headers, json=payload)
+        if response.status_code == 200:
+            data = response.json()
+            labels = [ann["description"] for ann in data["responses"][0].get("labelAnnotations", [])]
+            all_labels.extend(labels)
+        else:
+            print("Vision API REST error:", response.text)
+
+    unique_labels = list(set(all_labels))
+    return unique_labels[:10]
 
 
 
@@ -201,100 +306,85 @@ available_functions = {
 
 # ★★★ OpenAI v1.x 対応: API呼び出しとレスポンス処理を修正 ★★★
 def run_conversation_with_function_calling(messages):
-    """
-    →OpenAIに対しチャットを送信し、もしTool Callがあれば実行して結果を再度OpenAIに渡す。
-    最終的に得られたアシスタントからのテキスト返信と、関数が呼ばれた場合はその結果(JSON文字列)を返す。
-    """
     try:
-        # --- OpenAI API 呼び出し (1回目) ---
-        response = client.chat.completions.create(#openaiに、model指定と先ほどのtoolsを渡し、jsonファイルを受ける
-            # model="gpt-3.5-turbo-0613", # 古いモデル名
-            model="gpt-3.5-turbo",     # 推奨: 最新のgpt-3.5-turboモデル
-            messages=messages,        #会話履歴を渡すために定義
-            tools=tools,              # ★ functions -> tools
-            tool_choice="auto"        # GPTに必要なら関数を呼ぶ行為を任せるために、autoを指定
+        # 1回目: GPTに会話を送信（tool callを期待）
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            tools=tools,
+            tool_choice="auto"
         )
-        # --- ここまで OpenAI API呼び出し (1回目) ---
-        response_message = response.choices[0].message # ★ 返ってきたメッセージから、最初のメッセージ応答を取得
 
-        # ★ Tool Call が要求されているかチェック
-        tool_calls = response_message.tool_calls  # GPTが「関数を呼びたい」と言ってきた場合、その呼び出し内容（tool_calls）を取得
+        response_message = response.choices[0].message
+        tool_calls = response_message.tool_calls
+
         if tool_calls:
-            # 最初のTool Callを処理（複数Tool Callには対応しないシンプルな実装）
-            tool_call = tool_calls[0]
-            function_name = tool_call.function.name# 今回は1つだけ処理（複数関数呼び出しには未対応）
-            function_to_call = available_functions.get(function_name)# GPTが呼びたい関数名を取得
+            # Tool callメッセージを履歴に追加
+            messages.append(response_message)
 
-            if function_to_call:
-                # 引数を取得
-                function_args = json.loads(tool_call.function.arguments) # GPTが生成した引数（JSON文字列）をPythonの辞書に変換
+            # すべてのtool_callに対応
+            for tool_call in tool_calls:
+                function_name = tool_call.function.name
+                function_to_call = available_functions.get(function_name)
+                function_args = json.loads(tool_call.function.arguments)
 
-                # location_biasの補完ロジック (変更なし)
-                if 'location_bias' not in function_args and 'dest' in st.session_state and st.session_state.dest:# location_biasが指定されておらず、session_stateにdestがある場合
-                     coords = get_coordinates(st.session_state.dest) # 目的地(dest)から緯度経度を取得
-                     if coords:
-                         function_args['location_bias'] = coords
-                         print(f"座標が見つかりました。location_bias を補完: {coords}")
-                     else:
-                         print(f"座標が見つかりませんでした。location_bias はなしで検索します。")
+                # location_bias の補完
+                if 'location_bias' not in function_args and 'dest' in st.session_state:
+                    coords = get_coordinates(st.session_state.dest)
+                    if coords:
+                        function_args['location_bias'] = coords
 
-                # ★ 実際の関数を実行
-                function_response = function_to_call(**function_args) # 関数を実際に実行し、結果を取得（引数を展開して渡す）
+                # 関数を実行
+                function_response = function_to_call(**function_args)
 
-                # ★★★ Tool Call の結果をメッセージ履歴に追加 ★★★
-                messages.append(response_message) # AIの応答（Tool Call指示）を履歴に追加
-                messages.append(
-                    {
-                        "tool_call_id": tool_call.id, #このTool CallのIDを指定（GPTが次の応答時にこれを見て理解する）
-                        "role": "tool",             # role は "tool"
-                        "name": function_name,   # 実行した関数名
-                        "content": function_response, # 関数の実行結果(JSON文字列)
-                    }
-                )
-                # --- ここまで toolロールメッセージ追加 ---
+                # tool role のレスポンスを履歴に追加
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": function_name,
+                    "content": function_response
+                })
 
-                # 2回目のリクエスト (ツールの結果を考慮した最終応答)
-                print("--- Sending tool results back to OpenAI ---") # デバッグ用
-                print(f"Messages sent (2nd req): {messages}")      # デバッグ用
-                second_response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=messages # ツール結果を含むメッセージ履歴
-                )
-                # --- ここまで OpenAI API呼び出し (2回目) ---
+            # 2回目: ツールの結果を含めて再送信
+            second_response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=messages
+            )
+            print("=== 2回目のGPT応答 ===")
+            print(second_response.choices[0].message)
+            
+            final_content = second_response.choices[0].message.content
+            return final_content, function_response
 
-                # ★ 最終応答と関数結果(JSON文字列)を返す
-                final_content = second_response.choices[0].message.content # GPTからの最終応答（関数結果をふまえたメッセージ）を取得
-                return final_content, function_response # ユーザーに返すメッセージと、関数呼び出し結果を返す
-            else:
-                # 指定された関数が見つからない場合
-                print(f"Error: Function '{function_name}' not found in available_functions.")
-                return f"エラー: 内部関数 '{function_name}' が見つかりません。", None
         else:
-            # --- Tool Call なしの通常返信 ---
+            # tool_callがない場合は普通に返す
             final_content = response_message.content
             return final_content, None
-            # --- ここまで 通常返信の場合 ---
 
     except openai.APIError as e:
-        # OpenAI API自体から返されたエラー (例: レート制限、認証エラー)
         st.error(f"OpenAI APIエラーが発生しました: {e}")
-        print(f"OpenAI API Error: {e.status_code} - {e.message}") # 詳細ログ
-        return "申し訳ありません、AIとの通信中にAPIエラーが発生しました。", None
+        return "APIエラーが発生しました。", None
     except Exception as e:
-        # その他の予期せぬエラー
         st.error(f"OpenAIとの通信中に予期せぬエラーが発生しました: {e}")
         import traceback
-        st.error(traceback.format_exc()) # 詳細なトレースバックを表示
-        return "申し訳ありません、AIとの通信中に予期せぬエラーが発生しました。", None
+        st.error(traceback.format_exc())
+        return "エラーが発生しました。", None
 
 
 # --- 6. Streamlitの画面構成 (認証なし) ---
 
+
 # --- サイドバー ---
+with st.sidebar:
+    st.image("assets/logo_okosy.png", width=100)
 st.sidebar.header("メニュー")
 menu_choice = st.sidebar.radio("", ["新しい旅を計画する", "過去の旅のしおりを見る"], key="main_menu", label_visibility="collapsed")
 
 # --- セッションステート初期化(この後の定義文字と合うように記載している) ---
+if "show_planner_select" not in st.session_state:
+    st.session_state.show_planner_select = False
+if "planner_selected" not in st.session_state:
+    st.session_state.planner_selected = False
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "itinerary_generated" not in st.session_state:
@@ -315,6 +405,50 @@ if "preferences" not in st.session_state:
 # --- メインコンテンツ ---
 
 # --- 7. 新しい旅を計画する ---
+from PIL import Image
+st.markdown("""
+    <style>
+    .centered-button {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+st.markdown('<div class="title-center">さあ、あなただけの旅をはじめよう。</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="center-button-wrapper">', unsafe_allow_html=True)
+start_clicked = st.button("プランニングを始める")
+st.markdown('</div>', unsafe_allow_html=True)
+
+if start_clicked:
+    st.session_state.show_planner_select = True
+
+if st.session_state.show_planner_select and not st.session_state.planner_selected:
+    st.subheader("あなたにぴったりのプランナーを選んでください")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("シゴデキのベテランプランナー"):
+            st.session_state.planner = "ベテラン"
+        st.caption("テイスト：端的でシンプル。安心のプロ感。")
+
+        if st.button("地元に詳しいおせっかい姉さん"):
+            st.session_state.planner = "姉さん"
+        st.caption("テイスト：その土地の方言＋親しみやすさ満点。")
+
+    with col2:
+        if st.button("旅好きインスタグラマー"):
+            st.session_state.planner = "ギャル"
+        st.caption("テイスト：テンション高め、語尾にハート。")
+
+        if st.button("甘い言葉をささやく王子様"):
+            st.session_state.planner = "王子"
+        st.caption("テイスト：ちょっとナルシストだけど優しくリード。")
+    
 if menu_choice == "新しい旅を計画する":
     st.header("新しい旅の計画")
     st.subheader("1. 旅の基本情報を入力")
@@ -334,22 +468,26 @@ if menu_choice == "新しい旅を計画する":
     if submitted_basic:
         if not st.session_state.dest:
             st.warning("行き先を入力してください。")
-        else:#辞書の前回の結果を初期化する処理を実施
+        else:
             st.success(f"基本情報を受け付けました: {st.session_state.dest}への{st.session_state.comp}旅行 ({st.session_state.days}日間)")
-            st.session_state.basic_info_submitted = True #「基本情報フォームが送信された」ことを記録。今後の処理（旅のしおり生成や観光地提案）を出し分けるためのフラグ（状態管理）。
-            st.session_state.itinerary_generated = False #旅のしおり（itinerary）がまだ生成されていないという初期状態にリセット。
-            st.session_state.generated_shiori_content = None #前回の結果が残らないように、GPTが生成した「しおりコンテンツ」を空にリセット。
+            st.session_state.basic_info_submitted = True
+            st.session_state.itinerary_generated = False
+            st.session_state.generated_shiori_content = None
             st.session_state.final_places_data = None
-            st.session_state.preferences_submitted = False #この後の「ユーザーの好み入力フォーム」（もしある場合）の入力完了フラグをFalseに。
+            st.session_state.preferences_submitted = False
             st.session_state.preferences = {}
 
     if st.session_state.basic_info_submitted:
         st.subheader("2. あなたの好みを教えてください")
+
+        st.subheader("画像からインスピレーションを得る")
+        uploaded_images = st.file_uploader("あなたが「好き」と思う写真を3枚までアップロードしてください（自然、街並み、空間など）", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+        if uploaded_images:
+            st.session_state.uploaded_images = uploaded_images[:3]
+
         with st.form("preferences_form"):
-            # 好み入力フォーム要素 
             st.session_state.pref_pace = st.radio("旅のペースは？", ["のんびり", "普通", "アクティブ"], index=["のんびり", "普通", "アクティブ"].index(st.session_state.get('pref_pace', '普通')))
             st.session_state.pref_nature = st.slider("自然(1～5)", 1, 5, st.session_state.get('pref_nature', 3))
-            # ...(他のスライダーや選択肢も同様)...
             st.session_state.pref_culture = st.slider("歴史文化(1～5)", 1, 5, st.session_state.get('pref_culture', 3))
             st.session_state.pref_art = st.slider("アート(1～5)", 1, 5, st.session_state.get('pref_art', 3))
             st.session_state.pref_food_local = st.radio("食事スタイル", ["地元の人気店", "隠れ家的なお店", "こだわらない"], index=["地元の人気店", "隠れ家的なお店", "こだわらない"].index(st.session_state.get('pref_food_local', '地元の人気店')))
@@ -361,20 +499,33 @@ if menu_choice == "新しい旅を計画する":
             st.session_state.pref_experience = st.multiselect("興味ある体験", ["温泉", "ものづくり", "寺社仏閣", "食べ歩き", "ショッピング", "何もしない"], default=st.session_state.get('pref_experience', []))
             submitted_prefs = st.form_submit_button("好みを確定して旅のしおりを生成")
 
-        if submitted_prefs:#ユーザーが好みを入力したときに送信される
-            st.session_state.preferences_submitted = True
-            st.session_state.preferences = {
-                "pace": st.session_state.pref_pace, "nature": st.session_state.pref_nature,
-                "culture": st.session_state.pref_culture, "art": st.session_state.pref_art,
-                "food_local": st.session_state.pref_food_local, "food_style": st.session_state.pref_food_style,
-                "accom_type": st.session_state.pref_accom_type, "accom_view": st.session_state.pref_accom_view,
-                "vibe_quiet": st.session_state.pref_vibe_quiet, "vibe_discover": st.session_state.pref_vibe_discover,
-                "experience": st.session_state.pref_experience
-            }#好みのタイプを、キーを設定しながら辞書に保存(初期化してもデータは生きるように)
-            st.info("しおりを作成中です。少々お待ちください...")
-            #ここからプロンプトを作る、選択肢と好み情報を入れ込む。その後に出力指示を入れる
-            prompt = f"""
+            if submitted_prefs:
+                st.session_state.preferences_submitted = True
+                st.session_state.preferences = {
+                    "pace": st.session_state.pref_pace, "nature": st.session_state.pref_nature,
+                    "culture": st.session_state.pref_culture, "art": st.session_state.pref_art,
+                    "food_local": st.session_state.pref_food_local, "food_style": st.session_state.pref_food_style,
+                    "accom_type": st.session_state.pref_accom_type, "accom_view": st.session_state.pref_accom_view,
+                    "vibe_quiet": st.session_state.pref_vibe_quiet, "vibe_discover": st.session_state.pref_vibe_discover,
+                    "experience": st.session_state.pref_experience
+                }
+                st.info("しおりを作成中です。少々お待ちください...")
+
+                vision_tags = []
+                if "uploaded_images" in st.session_state and st.session_state.uploaded_images:
+                    try:
+                        st.info("画像からあなたの好みを解析しています...")
+                        vision_tags = get_vision_labels_from_uploaded_images(st.session_state.uploaded_images)
+                    except Exception as e:
+                        st.warning(f"画像解析中にエラーが発生しました: {e}")
+                        vision_tags = []
+                vision_tag_text = "、".join(vision_tags) if vision_tags else "（画像からの情報はありません）"
+
+                prompt = f"""
 あなたは旅のプランナー「Okosy」です。ユーザーの入力情報をもとに、SNS映えや定番から少し離れた、ユーザー自身の感性に寄り添うような、パーソナルな旅のしおりを作成してください。
+
+【画像から読み取れた特徴（Google Vision APIによるラベル抽出）】
+{vision_tag_text}
 
 【基本情報】
 - 行き先: {st.session_state.dest}
@@ -387,90 +538,23 @@ if menu_choice == "新しい旅を計画する":
 {json.dumps(st.session_state.preferences, ensure_ascii=False, indent=2)}
 
 【出力指示】
-1.  **構成:** {st.session_state.days}日間の旅程を、各日ごとに「午前」「午後」「夜」のセクションに分けて提案してください。
-2.  **内容:**
-    * なぜその場所や過ごし方がユーザーの目的・気分・好みに合っているか、**感性的な言葉**で理由や提案コメントを添えてください。
-    * ユーザーの「隠れた発見をしたい」という気持ち（`vibe_discover`がTrueの場合）を考慮し、定番すぎないスポットや体験も提案に含めてください。
-    * 食事や宿泊の好みも反映してください。
-    * 特に、ユーザーの宿泊に関する好み (`accom_type`) が「ホテル」「旅館」「民宿・ゲストハウス」のいずれかである場合、適切なタイミングで `search_google_places` ツールを `place_type='lodging'` として呼び出し、具体的な宿の候補を検索・提案に含めてください。**
-    * 同様に、食事 (`restaurant`, `cafe`) や観光 (`tourist_attraction`, `museum` など) に関しても、ユーザーの好みに合わせて適切な `place_type` を指定してツールを呼び出してください。
-    * ツールの結果が得られた場合は、その場所名を旅程に自然に組み込んでください。エラーが返ってきた場合は、代替案を提示してください。
-3.  **形式:** 全体を読みやすい**マークダウン形式**で出力してください。
-
-Okosyとして、ユーザーに最高の旅体験をデザインしてください。
+1. 各日を「午前」「午後」「夜」に分けて提案してください。
+2. なぜその場所が合っているのか、感性的な理由を含めてください。
+3. 必要に応じて search_google_places を使用してください。
+4. 出力形式はマークダウンです。
             """
-            st.session_state.messages = [{"role": "user", "content": prompt}]
-            with st.spinner("AIが旅のしおりを作成しています..."):
-                # ★★★ run_conversation_with_function_calling を呼び出す ★★★
-                final_response, places_api_result = run_conversation_with_function_calling(st.session_state.messages)
-                #fainal responseでGPTの文章を受けて、apiの結果をplace_apiで受ける
-            if final_response:
-                st.session_state.itinerary_generated = True
-                st.session_state.generated_shiori_content = final_response
-                st.session_state.final_places_data = places_api_result
-                st.success("旅のしおりが完成しました！")
-            else:
-                st.error("しおりの生成中にエラーが発生しました。")
 
-    if st.session_state.itinerary_generated and st.session_state.generated_shiori_content:
-        st.subheader("あなたの旅のしおり")
-        st.markdown(st.session_state.generated_shiori_content)#しおりの情報をマークダウン表示
-        st.markdown("---")
-        #観光地リストのデータがあれば、展開可能ボックスに収納する
-        if st.session_state.final_places_data:
-            with st.expander("提案に含まれる可能性のある場所リスト (Google Places APIの結果)"):
-                # (場所リスト表示部分は変更なし)
-                try:
-                    places = json.loads(st.session_state.final_places_data)#JSON文字列を辞書に変換
-                    if isinstance(places, list):#list形式なら、表形式で表示する
-                        try:
-                            df = pd.DataFrame(places)
-                            st.dataframe(df)
-                        except Exception as e: st.write(places)#表にできなければそのまま表示
-                    elif isinstance(places, dict) and 'error' in places:#エラーメッセージの処理
-                        st.warning(f"場所情報の取得中にエラーが発生しました: {places['error']}")
-                    else: st.write(places)
-                except json.JSONDecodeError:
-                    st.error("場所情報の解析中にエラーが発生しました。")
-                    st.text(st.session_state.final_places_data)
-                except Exception as e:
-                     st.error(f"場所情報の表示中に予期せぬエラーが発生しました: {e}")
-                     st.text(st.session_state.final_places_data)
+                st.session_state.messages = [{"role": "user", "content": prompt}]
+                with st.spinner("AIが旅のしおりを作成しています..."):
+                    final_response, places_api_result = run_conversation_with_function_calling(st.session_state.messages)
 
-        #しおり保存インターフェース
-        st.subheader("しおりを保存しますか？")
-        st.session_state.shiori_name_input = st.text_input("しおりの名前", value=st.session_state.get('shiori_name_input', f"{st.session_state.get('dest', '旅行')}の旅 {datetime.date.today()}"))
-        if st.button("このしおりを保存する", key="save_shiori"):
-            shiori_name = st.session_state.shiori_name_input#しおりの名前を上記で指定したものとして保存
-            if not shiori_name:
-                st.warning("しおりの名前を入力してください。")
-            else:
-                try:#データベースに接続し、しおりを保存
-                    conn = get_db_connection()
-                    cursor = conn.cursor()
-                    # INSERT文：名前・好み・しおり内容・観光地リストを保存
-                    cursor.execute(
-                        "INSERT INTO itineraries (name, preferences, generated_content, places_data) VALUES (?, ?, ?, ?)",
-                        (shiori_name, json.dumps(st.session_state.preferences, ensure_ascii=False),
-                         st.session_state.generated_shiori_content, st.session_state.final_places_data)
-                    )
-                    conn.commit()
-                    conn.close()
-                    st.success(f"しおり「{shiori_name}」を保存しました！")
-                    # 状態リセット (変更なし)
-                    keys_to_reset = [
-                        "basic_info_submitted", "preferences_submitted", "itinerary_generated",
-                        "generated_shiori_content", "final_places_data", "preferences",
-                        "dest", "purp", "comp", "days", "budg", "pref_pace", "pref_nature",
-                        "pref_culture", "pref_art", "pref_food_local", "pref_food_style",
-                        "pref_accom_type", "pref_accom_view", "pref_vibe_quiet",
-                        "pref_vibe_discover", "pref_experience", "shiori_name_input"
-                    ]
-                    for key in keys_to_reset:
-                        if key in st.session_state: del st.session_state[key]
-                    st.rerun() #ページを初期状態に再読み込み
-                except Exception as e:
-                    st.error(f"しおりの保存中にエラーが発生しました: {e}")
-                    import traceback
-                    st.error(traceback.format_exc())
+                if final_response:
+                    st.session_state.itinerary_generated = True
+                    st.session_state.generated_shiori_content = final_response
+                    st.session_state.final_places_data = places_api_result
+                    st.success("旅のしおりが完成しました！")
 
+                    st.subheader("あなたの旅のしおり")
+                    st.markdown(st.session_state.generated_shiori_content)
+                else:
+                    st.error("しおりの生成中にエラーが発生しました。")

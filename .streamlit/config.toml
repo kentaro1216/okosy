@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#246798"  # ボタンの色など
+backgroundColor = "#FBFAF7"  # メイン背景
+secondaryBackgroundColor = "#F0F0F0"  # サイドバーやカード
+textColor = "#2c2c2c"  # 全体の文字色
+font = "Special Gothic"
