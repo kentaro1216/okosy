@@ -845,56 +845,76 @@ if st.session_state.get('user_info') is not None:
         if key not in st.session_state:
             st.session_state[key] = default_value
 
-
+# ここから上未修整（りーえー）
     # --- メインコンテンツ ---
 
     # --- 7. 新しい旅を計画する ---
     if menu_choice == "新しい旅を計画する":
 
+    # 初期状態を設定
+        if "started_planning" not in st.session_state:
+            st.session_state.started_planning = False
+        if "planner_selected" not in st.session_state:
+            st.session_state.planner_selected = False
+        if "show_planner_select" not in st.session_state:
+            st.session_state.show_planner_select = False
+        if "nickname" not in st.session_state:
+            st.session_state.nickname = ""
+    
+    # まだ始めてないとき →「プランニングを始める」ボタンのみ表示
+    if not st.session_state.started_planning:
         st.markdown('<div class="title-center">さあ、あなただけの旅をはじめよう。</div>', unsafe_allow_html=True)
-
-        # まだプランニングを開始していない、またはプランナー未選択の場合
-        if not st.session_state.basic_info_submitted and not st.session_state.planner_selected:
-             st.markdown('<div class="center-button-wrapper">', unsafe_allow_html=True)
-             if st.button("プランニングを始める"):
+        if st.button("プランニングを始める"):
+            st.session_state.started_planning = True
+            st.rerun()
+    
+    # ニックネーム入力＋「プランナーを選ぶ」ボタンを表示
+    elif st.session_state.started_planning and not st.session_state.show_planner_select:
+        st.subheader("あなたのニックネームを入力してください")
+        st.session_state.nickname = st.text_input("ニックネーム", key="nickname_input")
+        if st.button("プランナーを選ぶ"):
+            if st.session_state.nickname.strip() == "":
+                st.error("ニックネームを入力してください")
+            else:
                 st.session_state.show_planner_select = True
                 st.rerun()
-             st.markdown('</div>', unsafe_allow_html=True)
-
-
-        # プランナー選択画面を表示する場合
-        if st.session_state.show_planner_select and not st.session_state.planner_selected:
-            st.subheader("あなたにぴったりのプランナーを選んでください")
-            planner_options = {
+    # プランナー選択画面を表示する場合
+    elif st.session_state.show_planner_select and not st.session_state.planner_selected:
+        st.subheader("あなたにぴったりのプランナーを選んでください")
+        planner_options = {
                 "ベテラン": {"name": "ベテラン", "prompt_persona": "経験豊富なプロの旅行プランナーとして、端的かつ的確に", "caption": "テイスト：端的でシンプル。安心のプロ感。"},
                 "姉さん": {"name": "姉さん", "prompt_persona": "地元に詳しい世話好きな姉さんとして、親しみやすい方言（例：関西弁や博多弁など、行き先に合わせて）を交えつつ元気に", "caption": "テイスト：その土地の方言＋親しみやすさ満点。"},
                 "ギャル": {"name": "ギャル", "prompt_persona": "最新トレンドに詳しい旅好きギャルとして、絵文字（💖✨）や若者言葉を多用し、テンション高めに", "caption": "テイスト：テンション高め、語尾にハート。"},
                 "王子": {"name": "王子", "prompt_persona": "あなたの旅をエスコートする王子様として、優雅で少しキザな言葉遣いで情熱的に", "caption": "テイスト：ちょっとナルシストだけど優しくリード。"}
             }
-            col1, col2 = st.columns(2)
-            with col1:
+        col1, col2 = st.columns(2)
+        with col1:
                 for key in ["ベテラン", "姉さん"]:
                     st.markdown('<div class="planner-button">', unsafe_allow_html=True)
                     button_label = f"シゴデキの{key}プランナー" if key == "ベテラン" else f"地元に詳しいおせっかい{key}"
                     if st.button(button_label, key=f"planner_{key}"):
                         st.session_state.planner = planner_options[key]
                         st.session_state.planner_selected = True
+                        st.session_state.step = 1
                         st.rerun()
                     st.markdown('</div>', unsafe_allow_html=True)
                     st.caption(planner_options[key]["caption"])
-            with col2:
+        with col2:
                  for key in ["ギャル", "王子"]:
                     st.markdown('<div class="planner-button">', unsafe_allow_html=True)
                     button_label = f"旅好きインスタグラマー（{key}）" if key == "ギャル" else f"甘い言葉をささやく{key}様"
                     if st.button(button_label, key=f"planner_{key}"):
                         st.session_state.planner = planner_options[key]
                         st.session_state.planner_selected = True
+                        st.session_state.step = 1
                         st.rerun()
                     st.markdown('</div>', unsafe_allow_html=True)
                     st.caption(planner_options[key]["caption"])
 
+# 898,909に「st.session_state.step = 1」追記。以下1049まで未修整（りーえー）
+ 
         # プランナー選択済みの場合、フォームまたは結果を表示
-        elif st.session_state.planner_selected:
+    elif st.session_state.planner_selected:
 
             # しおりが生成済みの場合
             if st.session_state.itinerary_generated and st.session_state.generated_shiori_content:
@@ -1027,32 +1047,45 @@ if st.session_state.get('user_info') is not None:
                     for key in keys_to_clear_on_rerun:
                          if key in st.session_state: del st.session_state[key]
                     st.rerun()
+# ここまで未修整（りーえー）
 
             # しおり未生成の場合、フォーム表示
             else:
                 # 基本情報フォーム
-                if not st.session_state.basic_info_submitted:
-                     st.subheader("1. 旅の基本情報を入力")
-                     with st.form("basic_info_form"):
-                         st.session_state.purp = st.text_area("旅の目的や気分", value=st.session_state.get('purp', ''), help="例：リフレッシュしたい、美味しいものを食べたい、非日常を味わいたい")
-                         st.session_state.comp = st.selectbox("同行者", ["一人旅", "夫婦・カップル", "友人", "家族"], index=["一人旅", "夫婦・カップル", "友人", "家族"].index(st.session_state.get('comp', '一人旅')))
-                         st.session_state.days = st.number_input("旅行日数", min_value=1, max_value=30, step=1, value=st.session_state.get('days', 2))
-                         st.session_state.budg = st.select_slider("予算感", options=["気にしない", "安め", "普通", "高め"], value=st.session_state.get('budg', "普通"))
-                         submitted_basic = st.form_submit_button("基本情報を確定")
-
-                     if submitted_basic:
-                         if not st.session_state.purp:
-                             st.warning("旅の目的や気分を入力してください。")
-                         else:
-                             st.success(f"基本情報を受け付けました: {st.session_state.comp}旅行 ({st.session_state.days}日間)")
-                             st.session_state.basic_info_submitted = True
-                             st.rerun()
-
+                if 'step' not in st.session_state:
+                    st.session_state.step = 1
+                if st.session_state.step == 1:
+                    st.subheader("1. 旅の基本情報を入力 (1/4)")
+                    with st.form("basic_info_form"):
+                        # 都道府県＋未定の選択肢
+                        prefectures = [
+                            "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
+                            "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県",
+                            "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県",
+                            "岐阜県", "静岡県", "愛知県", "三重県",
+                            "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県",
+                            "鳥取県", "島根県", "岡山県", "広島県", "山口県", "徳島県", "香川県", "愛媛県", "高知県",
+                            "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県",
+                            "沖縄県", "まだ決まっていない"
+                        ]
+                        st.session_state.destination = st.selectbox(
+                            "目的地が決まっていたら教えてください",
+                            options=prefectures,
+                            index=prefectures.index(st.session_state.get("destination", "まだ決まっていない"))
+                        )
+                        st.session_state.comp = st.selectbox("同行者", ["一人旅", "夫婦・カップル", "友人", "家族"], index=["一人旅", "夫婦・カップル", "友人", "家族"].index(st.session_state.get('comp', '一人旅')))
+                        st.session_state.days = st.number_input("旅行日数", min_value=1, max_value=30, step=1, value=st.session_state.get('days', 2))
+                        st.session_state.budg = st.select_slider("予算感", options=["気にしない", "安め", "普通", "高め"], value=st.session_state.get('budg', "普通"))
+                        submitted_basic = st.form_submit_button("基本情報を確定")
+                        if submitted_basic:
+                            st.session_state.step = 2
+                            st.rerun()
                 # 好み入力フォーム (基本情報入力済みの場合)
-                if st.session_state.basic_info_submitted:
-                    st.subheader("2. あなたの好みを教えてください")
-                    with st.form("preferences_form"):
-                        st.markdown("**行き先を決めるための質問**")
+                elif st.session_state.step == 2:
+                    st.info(f"基本情報を受け付けました: {st.session_state.comp}旅行 ({st.session_state.days}日間)")
+                    st.subheader("2. どんな旅にしたいですか？（2/4）")
+                    with st.form("destination_questions_form"):
+                        current_candidates = set()
                         prefecture_questions = [
                             { "key": "q0_sea_mountain", "q": "Q1: 海と山、どっち派？", "options": ["海", "山", "どちらでも"], "mapping": { "海": ["茨城県", "千葉県", "神奈川県", "静岡県", "愛知県", "三重県", "徳島県", "香川県", "高知県", "福岡県", "佐賀県", "沖縄県", "和歌山県", "兵庫県", "岡山県", "広島県", "山口県", "愛媛県", "大分県", "宮崎県", "鹿児島県", "長崎県", "熊本県", "福井県", "石川県", "富山県", "新潟県", "東京都", "宮城県", "岩手県", "青森県", "北海道"], "山": ["山形県", "栃木県", "群馬県", "山梨県", "長野県", "岐阜県", "滋賀県", "奈良県", "埼玉県", "福島県", "秋田県"], "どちらでも": st.session_state.all_prefectures } },
                             { "key": "q1_style", "q": "Q2: 旅のスタイルは？", "options": ["アクティブに観光", "ゆったり過ごす"], "mapping": { "アクティブに観光": ["北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県", "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県", "新潟県", "富山県", "石川県", "福井県", "長野県", "岐阜県", "静岡県", "愛知県", "三重県", "大阪府", "兵庫県", "広島県", "福岡県", "熊本県", "沖縄県"], "ゆったり過ごす": ["山梨県", "滋賀県", "京都府", "奈良県", "和歌山県", "鳥取県", "島根県", "岡山県", "山口県", "徳島県", "香川県", "愛媛県", "高知県", "佐賀県", "長崎県", "大分県", "宮崎県", "鹿児島県", "沖縄県", "北海道", "青森県", "秋田県", "岩手県", "山形県", "福島県", "群馬県", "栃木県", "長野県", "岐阜県", "石川県", "富山県", "三重県", "和歌山県"] } },
@@ -1064,39 +1097,60 @@ if st.session_state.get('user_info') is not None:
                             try: default_index = options_with_prompt.index(default_answer)
                             except ValueError: default_index = 0
                             st.radio(q_data["q"], options=options_with_prompt, index=default_index, key=f"q{i}_answer", horizontal=True)
-                        st.markdown("---")
-                        st.markdown("**旅の好みについて**")
+
+                        submitted_dest = st.form_submit_button("次へ")
+                        if submitted_dest:
+                            unanswered = [
+                                f"Q{i+1}" for i in range(len(prefecture_questions))
+                                if st.session_state.get(f"q{i}_answer", "選択してください") == "選択してください"
+                            ]
+                            if unanswered:
+                                st.warning(f"{', '.join(unanswered)} が未回答です。すべての質問に答えてください。")
+                            else:
+                                st.session_state.step = 3
+                                st.rerun()
+                elif st.session_state.step == 3:
+                    st.subheader("3. あなたの好みを教えてください(3/4)")
+                    with st.form("preferences_form"):
                         cols_slider = st.columns(4)
                         with cols_slider[0]: st.session_state.pref_nature = st.slider("🌲自然", 1, 5, st.session_state.get('pref_nature', 3))
                         with cols_slider[1]: st.session_state.pref_culture = st.slider("🏯歴史文化", 1, 5, st.session_state.get('pref_culture', 3))
                         with cols_slider[2]: st.session_state.pref_art = st.slider("🎨アート", 1, 5, st.session_state.get('pref_art', 3))
                         with cols_slider[3]: st.session_state.pref_welness = st.slider("♨️ウェルネス", 1, 5, st.session_state.get('pref_welness', 3))
                         cols_food = st.columns(2)
-                        with cols_food[0]: st.session_state.pref_food_local = st.radio("🍽️食事場所スタイル", ["地元の人気店", "隠れ家的なお店", "こだわらない"], index=["地元の人気店", "隠れ家的なお店", "こだわらない"].index(st.session_state.get('pref_food_local', '地元の人気店')))
+                        with cols_food[0]: st.session_state.pref_food_local = st.radio("🍽️食事場所スタイル", ["地元の人気店", "隠れ家的なお店", "シェフのこだわりのお店", "オーガニック・ヴィーガン対応のお店"], index=["地元の人気店", "隠れ家的なお店", "こだわらない"].index(st.session_state.get('pref_food_local', '地元の人気店')))
                         with cols_food[1]:
-                            pref_food_style_options = ["和食", "洋食", "カフェ", "スイーツ", "郷土料理", "エスニック", "ラーメン", "寿司"]
+                            pref_food_style_options = ["和食", "洋食", "居酒屋", "カフェ", "スイーツ", "郷土料理", "エスニック", "ラーメン", "寿司", "中華", "イタリアン"]
                             st.session_state.pref_food_style = st.multiselect("🍲好きな料理・ジャンル", pref_food_style_options, default=st.session_state.get('pref_food_style', []), key="pref_food_style_ms")
                         st.session_state.pref_accom_type = st.radio("🏨宿タイプ", ["ホテル", "旅館", "民宿・ゲストハウス", "こだわらない"], index=["ホテル", "旅館", "民宿・ゲストハウス", "こだわらない"].index(st.session_state.get('pref_accom_type', 'ホテル')), horizontal=True)
-                        pref_word_options = ["隠れた発見", "カラフル", "静かで落ち着いた", "冒険", "定番", "温泉", "寺社仏閣", "食べ歩き","ショッピング","日本酒","ワイン", "おこもり","子供と楽しむ", "ローカル体験", "アウトドア","写真映え", "パワースポット"]
+                        pref_word_options = ["隠れた発見", "カラフル", "静かで落ち着いた", "冒険", "定番", "温泉", "寺社仏閣", "食べ歩き","ショッピング","日本酒","ワイン", "おこもり","子供と楽しむ", "ローカル体験", "アウトドア","フォトジェニック", "パワースポット", "なにもしない"]
                         st.session_state.pref_word = st.multiselect("✨気になるワード (複数選択可)", pref_word_options, default=st.session_state.get('pref_word', []), key="pref_word_ms")
-                        st.session_state.mbti = st.text_input("🧠あなたのMBTIは？（任意：例 ENFP）", value=st.session_state.get("mbti", ""), key="mbti_input", help="性格タイプに合わせて提案が変わるかも？")
+                        submitted_pref_qs = st.form_submit_button("この内容で次へ")
+                        if submitted_pref_qs:
+                        # 回答チェック処理
+                            if (
+                            st.session_state.pref_food_style == "選択してください" or
+                            st.session_state.pref_accom_type == "選択してください" or
+                            st.session_state.pref_word == "選択してください"
+                            ):
+                                st.warning("すべての質問に回答してください。")
+                            else:
+                                st.session_state.step = 4
+                                st.rerun()
+                elif st.session_state.step == 4:
+                    st.subheader("4. あなたのことを教えてください (4/4)")
+                    with st.form("final_personal_info"):
+                        st.markdown("**🧠あなたのMBTIは？（任意）**")
+                        st.session_state.mbti = st.text_input("例 ENFP", value=st.session_state.get("mbti", ""), key="mbti_input", help="性格タイプに合わせて提案が変わるかも？")
                         st.markdown("**🖼️ 画像からインスピレーションを得る (任意)**")
                         uploaded_image_files = st.file_uploader("画像を3枚までアップロード", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="uploaded_image_files")
                         if uploaded_image_files and len(uploaded_image_files) > 3:
                             st.warning("画像は3枚まで。最初の3枚を使用します。")
-                        submitted_prefs = st.form_submit_button("好みを確定して旅のしおりを生成✨")
+                        st.markdown("**その他、なにかプランナーに伝えたいことはありますか？(任意)**")
+                        st.text_area("例：誕生日なので思いっきりラグジュアリーにしたい！")
+                        submitted_personal = st.form_submit_button("好みを確定して旅のしおりを生成✨")
 
-                    if submitted_prefs:
-                        all_q_answered = True
-                        for i, q_data in enumerate(prefecture_questions):
-                            if st.session_state.get(f"q{i}_answer", "選択してください") == "選択してください":
-                                st.warning(f"{q_data['q']} に回答してください。")
-                                all_q_answered = False
-                        if not st.session_state.get('purp'):
-                            st.warning("「旅の目的や気分」を入力してください（基本情報セクション）。")
-                            all_q_answered = False
-                        if not all_q_answered: st.stop()
-
+ # 以下未修整（りーえー）
                         current_candidates = set(st.session_state.all_prefectures)
                         # ...(行き先決定ロジック - 変更なし)...
                         for i, q_data in enumerate(prefecture_questions):
@@ -1111,8 +1165,6 @@ if st.session_state.get('user_info') is not None:
                         determined_destination_internal = random.choice(list(current_candidates))
                         st.session_state.determined_destination_for_prompt = determined_destination_internal
                         st.session_state.dest = determined_destination_internal
-                        print(f"Destination determined: {determined_destination_internal}")
-                        # st.success(f"行き先が **{determined_destination_internal}** に決まりました！ しおりを作成します...") # <<< メッセージ削除
 
                         preferences = {
                             "nature": st.session_state.pref_nature, "culture": st.session_state.pref_culture,
